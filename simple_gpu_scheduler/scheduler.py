@@ -4,21 +4,23 @@ import threading
 import subprocess
 import sys
 import os
+from subprocess import PIPE
 
 
-class GPUManager():
+class GPUManager:
     """GPU manager, keeps track which GPUs used and which are avaiable."""
 
-    def __init__(self, available_gpus):
+    def __init__(self, available_gpus, max_process_per_gpu):
         """Initialize GPU manager.
 
         Args:
             available_gpus: GPU ids of gpus that can be used.
 
         """
+        available_gpus = list(available_gpus) * max_process_per_gpu
         self.semaphore = threading.BoundedSemaphore(len(available_gpus))
         self.gpu_list_lock = threading.Lock()
-        self.available_gpus = list(available_gpus)
+        self.available_gpus = available_gpus
 
     def get_gpu(self):
         """Get a GPU, if none is available, wait until there is."""
@@ -40,7 +42,7 @@ class GPUManager():
             self.semaphore.release()
 
 
-class GPU():
+class GPU:
     """Representation of a GPU."""
 
     def __init__(self, nr, manager):
@@ -74,25 +76,20 @@ def run_command_with_gpu(command, gpu):
 
     """
     myenv = os.environ.copy()
-    myenv['CUDA_VISIBLE_DEVICES'] = str(gpu)
-    print(f'Processing command `{command}` on gpu {gpu}')
+    myenv["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    print(f"Processing command `{command}` on gpu {gpu}")
 
     def run_then_release_GPU(command, gpu):
+        # TODO: Set up logging
         myenv = os.environ.copy()
-        myenv['CUDA_VISIBLE_DEVICES'] = str(gpu)
-        proc = subprocess.Popen(
-            args=command,
-            shell=True,
-            env=myenv
-        )
+        myenv["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        proc = subprocess.Popen(args=command, shell=True, env=myenv)
+        # Use this later stdout=PIPE, stderr=PIPE
         proc.wait()
         gpu.release()
         return
 
-    thread = threading.Thread(
-        target=run_then_release_GPU,
-        args=(command, gpu)
-    )
+    thread = threading.Thread(target=run_then_release_GPU, args=(command, gpu))
     thread.start()
     # returns immediately after the thread starts
     return thread
@@ -114,14 +111,15 @@ def read_commands_and_run(gpu_manager):
 def main():
     """Read command line arguments and start reading from stdin."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gpus', nargs='+', type=str, required=True)
+    parser.add_argument("--gpus", nargs="+", type=str, required=True)
+    parser.add_argument("--max_process_per_gpu", type=int, default=1)
     args = parser.parse_args()
 
     # Support both comma separated and individually passed GPU ids
-    gpus = args.gpus if len(args.gpus) > 1 else args.gpus[0].split(',')
-    gpu_manager = GPUManager(gpus)
+    gpus = args.gpus if len(args.gpus) > 1 else args.gpus[0].split(",")
+    gpu_manager = GPUManager(gpus, args.max_process_per_gpu)
     read_commands_and_run(gpu_manager)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
